@@ -1,5 +1,13 @@
 package myers
 
+type Op uint8
+
+const (
+	EqualOp Op = iota
+	InsertOp
+	DeleteOp
+)
+
 func Diff(fst, snd []string) {
 	var (
 		x, y    int
@@ -64,7 +72,24 @@ func Diff(fst, snd []string) {
 	if x == len(fst) && y == len(snd) {
 		return
 	}
-	x, y = len(fst), len(snd)
+
+	ops, pos := collectOps(history, fst, snd)
+	slices.Reverse(ops)
+	slices.Reverse(pos)
+
+	script := rebuildScript(fst, pos, ops)
+	fmt.Println(ops, pos, script)
+}
+
+func advance(x, y *int, fst, snd []string) {
+	for *x < len(fst) && *y < len(snd) && fst[*x] == snd[*y] {
+		*x++
+		*y++
+	}
+}
+
+func collectOps(history []map[int]int, fst, snd []string) ([]Op, []int) {
+	x, y := len(fst), len(snd)
 
 	var (
 		ops []Op
@@ -107,8 +132,10 @@ func Diff(fst, snd []string) {
 			}
 		}
 	}
-	slices.Reverse(ops)
-	slices.Reverse(pos)
+	return ops, pos
+}
+
+func rebuildScript(fst []string, pos []int, codes []Op) []Op {
 	var (
 		last   int
 		script []Op
@@ -118,21 +145,13 @@ func Diff(fst, snd []string) {
 			script = append(script, EqualOp)
 		}
 		last = pos[i]
-		script = append(script, ops[i])
-		if ops[i] == DeleteOp {
+		script = append(script, codes[i])
+		if codes[i] == DeleteOp {
 			last++
 		}
 	}
 	for j := last; j < len(fst); j++ {
 		script = append(script, EqualOp)
 	}
-	fmt.Println(history)
-	fmt.Println(ops, pos, script)
-}
-
-func advance(x, y *int, fst, snd []string) {
-	for *x < len(fst) && *y < len(snd) && fst[*x] == snd[*y] {
-		*x++
-		*y++
-	}
+	return script
 }
