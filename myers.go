@@ -1,5 +1,9 @@
 package myers
 
+type Equaler[T any] interface {
+	Equal(T) bool
+}
+
 type Op uint8
 
 const (
@@ -8,7 +12,7 @@ const (
 	DeleteOp
 )
 
-func Diff(fst, snd []string) {
+func Diff[T Equaler[T]](fst, snd []T) {
 	var (
 		x, y    int
 		history []map[int]int
@@ -81,14 +85,14 @@ func Diff(fst, snd []string) {
 	fmt.Println(ops, pos, script)
 }
 
-func advance(x, y *int, fst, snd []string) {
-	for *x < len(fst) && *y < len(snd) && fst[*x] == snd[*y] {
+func advance[T Equaler[T]](x, y *int, fst, snd []T) {
+	for *x < len(fst) && *y < len(snd) && fst[*x].Equal(snd[*y]) {
 		*x++
 		*y++
 	}
 }
 
-func collectOps(history []map[int]int, fst, snd []string) ([]Op, []int) {
+func collectOps[T Equaler[T]](history []map[int]int, fst, snd []T) ([]Op, []int) {
 	x, y := len(fst), len(snd)
 
 	var (
@@ -135,7 +139,7 @@ func collectOps(history []map[int]int, fst, snd []string) ([]Op, []int) {
 	return ops, pos
 }
 
-func rebuildScript(fst []string, pos []int, codes []Op) []Op {
+func rebuildScript[T Equaler[T]](fst []T, pos []int, codes []Op) []Op {
 	var (
 		last   int
 		script []Op
