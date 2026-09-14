@@ -12,7 +12,15 @@ const (
 	DeleteOp
 )
 
+func Same[T Equaler[T]](fst, snd []T) bool {
+	script := Script(fst, snd)
+	return len(script) == 0
+}
+
 func Diff[T Equaler[T]](fst, snd []T) {
+}
+
+func Script[T Equaler[T]](fst, snd []T) []Op {
 	var (
 		x, y    int
 		history []map[int]int
@@ -81,8 +89,7 @@ func Diff[T Equaler[T]](fst, snd []T) {
 	slices.Reverse(ops)
 	slices.Reverse(pos)
 
-	script := rebuildScript(fst, pos, ops)
-	fmt.Println(ops, pos, script)
+	return rebuildScript(fst, pos, ops)
 }
 
 func advance[T Equaler[T]](x, y *int, fst, snd []T) {
