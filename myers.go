@@ -1,5 +1,9 @@
 package myers
 
+import (
+	"slices"
+)
+
 type Equaler[T any] interface {
 	Equal(T) bool
 }
@@ -12,9 +16,27 @@ const (
 	DeleteOp
 )
 
+func (o Op) String() string {
+	switch o {
+	case EqualOp:
+		return "equal"
+	case InsertOp:
+		return "insert"
+	case DeleteOp:
+		return "delete"
+	default:
+		return "???"
+	}
+}
+
 func Same[T Equaler[T]](fst, snd []T) bool {
 	script := Script(fst, snd)
-	return len(script) == 0
+	for i := range script {
+		if script[i] != EqualOp {
+			return false
+		}
+	}
+	return true
 }
 
 func Diff[T Equaler[T]](fst, snd []T) {
@@ -22,147 +44,178 @@ func Diff[T Equaler[T]](fst, snd []T) {
 
 func Script[T Equaler[T]](fst, snd []T) []Op {
 	var (
-		x, y    int
-		history []map[int]int
-		done    bool
-		edit    int
+		script = buildPath(fst, snd)
+		ops    []Op
 	)
-	advance(&x, &y, fst, snd)
-
-	paths := map[int]int{
-		0: x,
+	if script == nil {
+		return nil
 	}
-	history = append(history, paths)
-
-	for edit = 1; !done; edit++ {
-		next := make(map[int]int)
-		for offset, x := range paths {
-			y := x - offset
-			if y < len(snd) {
-				insX := x
-				insY := y + 1
-
-				advance(&insX, &insY, fst, snd)
-
-				if insX == len(fst) && insY == len(snd) {
-					x, y = insX, insY
-					done = true
-					break
-				}
-
-				insOffset := insX - insY
-				if old, ok := next[insOffset]; !ok || insX > old {
-					next[insOffset] = insX
-				}
-			}
-
-			if x < len(fst) {
-				delX := x + 1
-				delY := y
-
-				advance(&delX, &delY, fst, snd)
-
-				if delX == len(fst) && delY == len(snd) {
-					x, y = delX, delY
-					done = true
-					break
-				}
-
-				delOffset := delX - delY
-				if old, ok := next[delOffset]; !ok || delX > old {
-					next[delOffset] = delX
-				}
-			}
+	for {
+		for i := 0; i < script.Count; i++ {
+			ops = append(ops, script.Op)
 		}
-
-		paths = next
-		history = append(history, next)
-		if done {
+		script = script.parent
+		if script == nil {
 			break
 		}
 	}
+	slices.Reverse(ops)
+	return ops
+}
+
+func Explore[T Equaler[T]](fst, snd []T, do func(int, Op, T, T, bool, bool)) {
+	explore(fst, snd, 0, 0, 0, do)
+}
+
+func explore[T Equaler[T]](fst, snd []T, x, y, edit int, do func(int, Op, T, T, bool, bool)) {
+	for x < len(fst) && y < len(snd) && fst[x].Equal(snd[y]) {
+		do(edit, EqualOp, fst[x], snd[y], false, false)
+		x++
+		y++
+	}
 	if x == len(fst) && y == len(snd) {
+		do(edit, EqualOp, fst[x-1], snd[y-1], true, false)
+		return
+	}
+	if x == len(fst) || y == len(snd) {
+		do(edit, EqualOp, fst[x-1], snd[y-1], false, true)
 		return
 	}
 
-	ops, pos := collectOps(history, fst, snd)
-	slices.Reverse(ops)
-	slices.Reverse(pos)
-
-	return rebuildScript(fst, pos, ops)
-}
-
-func advance[T Equaler[T]](x, y *int, fst, snd []T) {
-	for *x < len(fst) && *y < len(snd) && fst[*x].Equal(snd[*y]) {
-		*x++
-		*y++
+	if x < len(fst) && y < len(snd) {
+		do(edit, DeleteOp, fst[x], snd[y], false, false)
+		explore(fst, snd, x+1, y, edit+1, do)
+	}
+	if y < len(snd) && x < len(fst) {
+		do(edit, InsertOp, fst[x], snd[y], false, false)
+		explore(fst, snd, x, y+1, edit+1, do)
 	}
 }
 
-func collectOps[T Equaler[T]](history []map[int]int, fst, snd []T) ([]Op, []int) {
-	x, y := len(fst), len(snd)
+type Step struct {
+	Edit   int
+	Offset int // diagonale du step
+	From   int // diagonale du parent, à Edit-1
+	Op     Op
+	X, Y   int
+	Count  int
+	Kept   bool
+}
+
+type path struct {
+	Step
+	parent *path
+}
+
+func buildPath[T Equaler[T]](fst, snd []T) *path {
+	x, y, count := advance(0, 0, fst, snd)
+
+	root := &path{
+		Step: Step{
+			Edit:   0,
+			Offset: x - y,
+			From:   0,
+			Op:     EqualOp,
+			X:      x,
+			Y:      y,
+			Count:  count,
+		},
+	}
+	if x == len(fst) && y == len(snd) {
+		return nil
+	}
 
 	var (
-		ops []Op
-		pos []int
+		paths  = map[int]*path{root.Offset: root}
+		winner *path
 	)
 
-	for e := len(history) - 2; e >= 0; e-- {
-		var (
-			offset = x - y
-			found  bool
-		)
-		if prevX, ok := history[e][offset+1]; ok {
-			prevY := prevX - (offset + 1)
+	for edit := 1; edit <= len(fst)+len(snd); edit++ {
+		next := make(map[int]*path)
+		for offset := -edit; offset <= edit; offset += 2 {
+			var (
+				pred int
+				xp   int
+				yp   int
+				curr *path
+				op   Op
+			)
+			switch {
+			case offset == -edit:
+				// insert only
+				pred = offset + 1
+				xp = paths[pred].X
+				op = InsertOp
+			case offset == edit:
+				// delete only
+				pred = offset - 1
+				xp = paths[pred].X + 1
+				op = DeleteOp
+			case paths[offset-1].X+1 >= paths[offset+1].X:
+				// delete
+				pred = offset - 1
+				xp = paths[pred].X + 1
+				op = DeleteOp
+			default:
+				// insert
+				pred = offset + 1
+				xp = paths[pred].X
+				op = InsertOp
+			}
+			yp = xp - offset
+			curr = paths[pred]
 
-			nextX := prevX
-			nextY := prevY + 1
+			child := &path{
+				parent: curr,
+				Step: Step{
+					Edit:   edit,
+					Offset: offset,
+					From:   curr.Offset,
+					Op:     op,
+					X:      xp,
+					Y:      yp,
+					Count:  1,
+				},
+			}
+			nx, ny, count := advance(xp, yp, fst, snd)
 
-			advance(&nextX, &nextY, fst, snd)
-			if nextX == x && nextY == y {
-				found = true
-				x, y = prevX, prevY
-				ops = append(ops, InsertOp)
-				pos = append(pos, x)
+			candidate := child
+
+			if count > 0 {
+				candidate = &path{
+					parent: child,
+					Step: Step{
+						Edit:   edit,
+						Offset: nx - ny,
+						From:   offset,
+						Op:     EqualOp,
+						X:      nx,
+						Y:      ny,
+						Count:  count,
+					},
+				}
+			}
+
+			next[offset] = candidate
+			if nx == len(fst) && ny == len(snd) {
+				winner = candidate
+				break
 			}
 		}
-		if found {
-			continue
-		}
-		if prevX, ok := history[e][offset-1]; ok {
-			prevY := prevX - (offset - 1)
-
-			nextX := prevX + 1
-			nextY := prevY
-
-			advance(&nextX, &nextY, fst, snd)
-			if nextX == x && nextY == y {
-				x, y = prevX, prevY
-				ops = append(ops, DeleteOp)
-				pos = append(pos, x)
-			}
+		paths = next
+		if winner != nil {
+			break
 		}
 	}
-	return ops, pos
+	return winner
 }
 
-func rebuildScript[T Equaler[T]](fst []T, pos []int, codes []Op) []Op {
-	var (
-		last   int
-		script []Op
-	)
-	for i := range pos {
-		for j := last; j < pos[i]; j++ {
-			script = append(script, EqualOp)
-		}
-		last = pos[i]
-		script = append(script, codes[i])
-		if codes[i] == DeleteOp {
-			last++
-		}
+func advance[T Equaler[T]](x, y int, fst, snd []T) (int, int, int) {
+	var count int
+	for x < len(fst) && y < len(snd) && fst[x].Equal(snd[y]) {
+		x++
+		y++
+		count++
 	}
-	for j := last; j < len(fst); j++ {
-		script = append(script, EqualOp)
-	}
-	return script
+	return x, y, count
 }
