@@ -1,32 +1,52 @@
 package main
 
 import (
+	"bufio"
+	"flag"
 	"fmt"
+	"os"
 
 	"github.com/midbel/myers"
 )
 
-type char rune
+type str string
 
-func (c char) Equal(other char) bool {
+func (c str) Equal(other str) bool {
 	return c == other
 }
 
-func chars(str string) []char {
-	list := make([]char, 0, len(str))
-	for _, r := range str {
-		list = append(list, char(r))
+func main() {
+	flag.Parse()
+
+	res1, err := Lines(flag.Arg(0))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	return list
+	res2, err := Lines(flag.Arg(1))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	ops := myers.Script(res1, res2)
+	for i := range ops {
+		fmt.Println(ops[i])
+	}
 }
 
-func main() {
+func Lines(file string) ([]str, error) {
+	r, err := os.Open(file)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
 	var (
-		fst = chars("abcabba")
-		snd = chars("cbabac")
+		scan  = bufio.NewScanner(r)
+		lines []str
 	)
-	myers.Explore(fst, snd, func(edit int, op myers.Op, a, b char, success, early bool) {
-		fmt.Println(edit, string(a), string(b))
-	})
-	// fmt.Println(ops)
+	for scan.Scan() {
+		lines = append(lines, str(scan.Text()))
+	}
+	return lines, scan.Err()
 }
