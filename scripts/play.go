@@ -20,7 +20,7 @@ type ArraySeq[T myers.Equaler[T]] struct {
 	offset int
 }
 
-func NewSequenceFromFile(file string) (myers.Sequence[str], error) {
+func ForkableFromFile(file string) (myers.Forkable[str], error) {
 	lines, err := Lines(file)
 	if err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func (s *ArraySeq[T]) Next() (T, error) {
 	return z, err
 }
 
-func (s *ArraySeq[T]) Fork() myers.Sequence[T] {
+func (s *ArraySeq[T]) Fork() myers.Forkable[T] {
 	x := &ArraySeq[T]{
 		offset: s.offset,
 		array:  s.array,
@@ -59,12 +59,12 @@ func (s *ArraySeq[T]) Fork() myers.Sequence[T] {
 func main() {
 	flag.Parse()
 
-	res1, err := NewSequenceFromFile(flag.Arg(0))
+	res1, err := ForkableFromFile(flag.Arg(0))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	res2, err := NewSequenceFromFile(flag.Arg(1))
+	res2, err := ForkableFromFile(flag.Arg(1))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

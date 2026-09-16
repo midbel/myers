@@ -12,9 +12,13 @@ type Equaler[T any] interface {
 var End = errors.New("end of sequence")
 
 type Sequence[T Equaler[T]] interface {
-	Fork() Sequence[T]
 	Next() (T, error)
 	Peek() (T, error)
+}
+
+type Forkable[T Equaler[T]] interface {
+	Sequence[T]
+	Fork() Forkable[T]
 }
 
 type Op uint8
@@ -82,19 +86,19 @@ type Entry[T any] struct {
 }
 
 func createEntry[T any](edit int, v1, v2 T) Entry[T] {
-	return Entry{
+	return Entry[T]{
 		Edit:   edit,
 		Op:     EqualOp,
 		First:  v1,
-		Second: v2,		
+		Second: v2,
 	}
 }
 
-func Explore[T Equaler[T]](fst, snd Sequence[T], do func(Entry[T]) error) error {
+func Explore[T Equaler[T]](fst, snd Forkable[T], do func(Entry[T]) error) error {
 	return explore(fst, snd, 0, do)
 }
 
-func explore[T Equaler[T]](fst, snd Sequence[T], edit int, do func(Entry[T]) error) error {
+func explore[T Equaler[T]](fst, snd Forkable[T], edit int, do func(Entry[T]) error) error {
 	v1, e1 := fst.Peek()
 	v2, e2 := snd.Peek()
 
