@@ -1,11 +1,20 @@
 package myers
 
 import (
+	"errors"
 	"slices"
 )
 
 type Equaler[T any] interface {
 	Equal(T) bool
+}
+
+var End = errors.New("end of sequence")
+
+type Sequence[T Equaler[T]] interface {
+	Fork() Sequence[T]
+	Next() (T, error)
+	Peek() (T, error)
 }
 
 type Op uint8
@@ -63,33 +72,76 @@ func Script[T Equaler[T]](fst, snd []T) []Op {
 	return ops
 }
 
-func Explore[T Equaler[T]](fst, snd []T, do func(int, Op, T, T, bool, bool)) {
-	explore(fst, snd, 0, 0, 0, do)
+type Entry[T any] struct {
+	Edit int
+	Op
+	First   T
+	Second  T
+	Success bool
+	Failure bool
 }
 
-func explore[T Equaler[T]](fst, snd []T, x, y, edit int, do func(int, Op, T, T, bool, bool)) {
-	for x < len(fst) && y < len(snd) && fst[x].Equal(snd[y]) {
-		do(edit, EqualOp, fst[x], snd[y], false, false)
-		x++
-		y++
+func createEntry[T any](edit int, v1, v2 T) Entry[T] {
+	return Entry{
+		Edit:   edit,
+		Op:     EqualOp,
+		First:  v1,
+		Second: v2,		
 	}
-	if x == len(fst) && y == len(snd) {
-		do(edit, EqualOp, fst[x-1], snd[y-1], true, false)
-		return
-	}
-	if x == len(fst) || y == len(snd) {
-		do(edit, EqualOp, fst[x-1], snd[y-1], false, true)
-		return
-	}
+}
 
-	if x < len(fst) && y < len(snd) {
-		do(edit, DeleteOp, fst[x], snd[y], false, false)
-		explore(fst, snd, x+1, y, edit+1, do)
+func Explore[T Equaler[T]](fst, snd Sequence[T], do func(Entry[T]) error) error {
+	return explore(fst, snd, 0, do)
+}
+
+func explore[T Equaler[T]](fst, snd Sequence[T], edit int, do func(Entry[T]) error) error {
+	v1, e1 := fst.Peek()
+	v2, e2 := snd.Peek()
+
+	entry := createEntry(edit, v1, v2)
+	switch {
+	case errors.Is(e1, End) && errors.Is(e2, End):
+		entry.Success = true
+		do(entry)
+		return End
+	case errors.Is(e1, End) || errors.Is(e2, End):
+		entry.Failure = true
+		do(entry)
+		return End
+	case e1 != nil:
+		return e1
+	case e2 != nil:
+		return e2
+	case v1.Equal(v2):
+		fst.Next()
+		snd.Next()
+
+		do(entry)
+		if err := explore(fst, snd, edit, do); err != nil {
+			return err
+		}
+	default:
+		delFst := fst.Fork()
+		delSnd := snd.Fork()
+		entry.Op = DeleteOp
+		do(entry)
+
+		delFst.Next()
+		if err := explore(delFst, delSnd, edit+1, do); err != nil {
+			return err
+		}
+
+		insFst := fst.Fork()
+		insSnd := snd.Fork()
+		entry.Op = InsertOp
+		do(entry)
+
+		insSnd.Next()
+		if err := explore(insFst, insSnd, edit+1, do); err != nil {
+			return err
+		}
 	}
-	if y < len(snd) && x < len(fst) {
-		do(edit, InsertOp, fst[x], snd[y], false, false)
-		explore(fst, snd, x, y+1, edit+1, do)
-	}
+	return nil
 }
 
 type Step struct {
