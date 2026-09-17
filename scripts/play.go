@@ -34,7 +34,7 @@ func ForkableFromFile(file string) (myers.Forkable[str], error) {
 
 func (s *ArraySeq[T]) Peek() (zero T, err error) {
 	if s.offset >= len(s.array) {
-		err = myers.End
+		err = myers.ErrEnd
 		return zero, err
 	}
 	return s.array[s.offset], nil
