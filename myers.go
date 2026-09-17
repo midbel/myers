@@ -17,11 +17,6 @@ type Sequence[T any] interface {
 	Peek() (T, error)
 }
 
-type Forkable[T any] interface {
-	Sequence[T]
-	Fork() Forkable[T]
-}
-
 type Op uint8
 
 const (
@@ -99,23 +94,6 @@ func Script[T Equaler[T]](fst, snd []T) []Step {
 	return ScriptFunc(fst, snd, func(a, b T) bool {
 		return a.Equal(b)
 	})
-}
-
-type Entry[T any] struct {
-	Edit    int
-	Op      Op
-	First   T
-	Second  T
-	Success bool
-	Failure bool
-}
-
-func Explore[T Equaler[T]](fst, snd Forkable[T], do func(Entry[T]) error) error {
-	err := explore(fst.Fork(), snd.Fork(), 0, do)
-	if errors.Is(err, ErrEnd) {
-		err = nil
-	}
-	return err
 }
 
 func equalStep(pos, count int) Step {
@@ -222,71 +200,4 @@ func advance[T any](x, y int, fst, snd []T, eq func(a, b T) bool) (int, int, int
 		count++
 	}
 	return x, y, count
-}
-
-func createEntry[T any](edit int, v1, v2 T) Entry[T] {
-	return Entry[T]{
-		Edit:   edit,
-		Op:     EqualOp,
-		First:  v1,
-		Second: v2,
-	}
-}
-
-func explore[T Equaler[T]](fst, snd Forkable[T], edit int, do func(Entry[T]) error) error {
-	v1, e1 := fst.Peek()
-	v2, e2 := snd.Peek()
-
-	entry := createEntry(edit, v1, v2)
-	switch {
-	case errors.Is(e1, ErrEnd) && errors.Is(e2, ErrEnd):
-		entry.Success = true
-		return do(entry)
-	case e1 != nil || e2 != nil:
-		if e1 != nil && !errors.Is(e1, ErrEnd) {
-			return e1
-		}
-		if e2 != nil && !errors.Is(e2, ErrEnd) {
-			return e2
-		}
-		entry.Failure = true
-		return do(entry)
-	case v1.Equal(v2):
-		fst.Next()
-		snd.Next()
-
-		if err := do(entry); err != nil {
-			return err
-		}
-		if err := explore(fst, snd, edit, do); err != nil {
-			return err
-		}
-	default:
-		entry.Edit += 1
-
-		delFst := fst.Fork()
-		delSnd := snd.Fork()
-		entry.Op = DeleteOp
-		if err := do(entry); err != nil {
-			return err
-		}
-
-		delFst.Next()
-		if err := explore(delFst, delSnd, edit+1, do); err != nil {
-			return err
-		}
-
-		insFst := fst.Fork()
-		insSnd := snd.Fork()
-		entry.Op = InsertOp
-		if err := do(entry); err != nil {
-			return err
-		}
-
-		insSnd.Next()
-		if err := explore(insFst, insSnd, edit+1, do); err != nil {
-			return err
-		}
-	}
-	return nil
 }

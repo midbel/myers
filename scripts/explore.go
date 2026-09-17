@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/midbel/myers"
+	"github.com/midbel/myers/explore"
 )
 
 type str string
@@ -20,7 +21,7 @@ type ArraySeq[T myers.Equaler[T]] struct {
 	offset int
 }
 
-func ForkableFromFile(file string) (myers.Forkable[str], error) {
+func ForkableFromFile(file string) (explore.Forkable[str], error) {
 	lines, err := Lines(file)
 	if err != nil {
 		return nil, err
@@ -48,7 +49,7 @@ func (s *ArraySeq[T]) Next() (T, error) {
 	return z, err
 }
 
-func (s *ArraySeq[T]) Fork() myers.Forkable[T] {
+func (s *ArraySeq[T]) Fork() explore.Forkable[T] {
 	x := &ArraySeq[T]{
 		offset: s.offset,
 		array:  s.array,
@@ -69,8 +70,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	myers.Explore(res1, res2, func(entry myers.Entry[str]) error {
-		fmt.Println(entry.Edit, entry.Op, entry.First, entry.Second, entry.Success, entry.Failure)
+	explore.Explore(res1, res2, func(entry explore.Entry[str]) error {
+		fmt.Println(entry.Edit, entry.Op, entry.Value, entry.Success, entry.Failure)
 		return nil
 	})
 }
