@@ -71,7 +71,7 @@ func main() {
 		os.Exit(1)
 	}
 	explore.Explore(res1, res2, func(entry explore.Entry[str]) error {
-		fmt.Println(entry.Edit, entry.Op, entry.Value, entry.Success, entry.Failure)
+		fmt.Println(entry.Edit, entry.Op, entry.Value, entry.State)
 		return nil
 	})
 }

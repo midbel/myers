@@ -11,12 +11,37 @@ type Forkable[T any] interface {
 	Fork() Forkable[T]
 }
 
+type State int
+
+const (
+	StateSucceed State = iota
+	StateFail
+)
+
+func (s State) String() string {
+	switch s {
+	case StateSucceed:
+		return "success"
+	case StateFail:
+		return "failure"
+	default:
+		return "normal"
+	}
+}
+
+func (s State) Succeed() bool {
+	return s == StateSucceed
+}
+
+func (s State) Failure() bool {
+	return s == StateFail
+}
+
 type Entry[T any] struct {
-	Edit    int
-	Op      myers.Op
-	Value   T
-	Success bool
-	Failure bool
+	Edit  int
+	Op    myers.Op
+	Value T
+	State State
 }
 
 func Explore[T myers.Equaler[T]](fst, snd Forkable[T], do func(Entry[T]) error) error {
@@ -41,7 +66,7 @@ func walk[T myers.Equaler[T]](fst, snd Forkable[T], edit int, do func(Entry[T]) 
 	entry := createEntry[T](edit)
 	switch {
 	case errors.Is(e1, myers.ErrEnd) && errors.Is(e2, myers.ErrEnd):
-		entry.Success = true
+		entry.State = StateSucceed
 		return do(entry)
 	case e1 != nil || e2 != nil:
 		if e1 != nil && !errors.Is(e1, myers.ErrEnd) {
@@ -50,7 +75,7 @@ func walk[T myers.Equaler[T]](fst, snd Forkable[T], edit int, do func(Entry[T]) 
 		if e2 != nil && !errors.Is(e2, myers.ErrEnd) {
 			return e2
 		}
-		entry.Failure = true
+		entry.State = StateFail
 		return do(entry)
 	case v1.Equal(v2):
 		fst.Next()
