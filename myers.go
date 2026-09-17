@@ -11,12 +11,12 @@ type Equaler[T any] interface {
 
 var End = errors.New("end of sequence")
 
-type Sequence[T Equaler[T]] interface {
+type Sequence[T any] interface {
 	Next() (T, error)
 	Peek() (T, error)
 }
 
-type Forkable[T Equaler[T]] interface {
+type Forkable[T any] interface {
 	Sequence[T]
 	Fork() Forkable[T]
 }
@@ -40,16 +40,6 @@ func (o Op) String() string {
 	default:
 		return "???"
 	}
-}
-
-func Same[T Equaler[T]](fst, snd []T) bool {
-	script := Script(fst, snd)
-	for i := range script {
-		if script[i] != EqualOp {
-			return false
-		}
-	}
-	return true
 }
 
 func Diff[T Equaler[T]](fst, snd []T) {
@@ -77,8 +67,8 @@ func Script[T Equaler[T]](fst, snd []T) []Op {
 }
 
 type Entry[T any] struct {
-	Edit int
-	Op
+	Edit    int
+	Op      Op
 	First   T
 	Second  T
 	Success bool
@@ -95,7 +85,11 @@ func createEntry[T any](edit int, v1, v2 T) Entry[T] {
 }
 
 func Explore[T Equaler[T]](fst, snd Forkable[T], do func(Entry[T]) error) error {
-	return explore(fst, snd, 0, do)
+	err := explore(fst.Fork(), snd.Fork(), 0, do)
+	if errors.Is(err, End) {
+		err = nil
+	}
+	return err
 }
 
 func explore[T Equaler[T]](fst, snd Forkable[T], edit int, do func(Entry[T]) error) error {
@@ -106,29 +100,35 @@ func explore[T Equaler[T]](fst, snd Forkable[T], edit int, do func(Entry[T]) err
 	switch {
 	case errors.Is(e1, End) && errors.Is(e2, End):
 		entry.Success = true
-		do(entry)
-		return End
-	case errors.Is(e1, End) || errors.Is(e2, End):
+		return do(entry)
+	case e1 != nil || e2 != nil:
+		if e1 != nil && !errors.Is(e1, End) {
+			return e1
+		}
+		if e2 != nil && !errors.Is(e2, End) {
+			return e2
+		}
 		entry.Failure = true
-		do(entry)
-		return End
-	case e1 != nil:
-		return e1
-	case e2 != nil:
-		return e2
+		return do(entry)
 	case v1.Equal(v2):
 		fst.Next()
 		snd.Next()
 
-		do(entry)
+		if err := do(entry); err != nil {
+			return err
+		}
 		if err := explore(fst, snd, edit, do); err != nil {
 			return err
 		}
 	default:
+		entry.Edit += 1
+
 		delFst := fst.Fork()
 		delSnd := snd.Fork()
 		entry.Op = DeleteOp
-		do(entry)
+		if err := do(entry); err != nil {
+			return err
+		}
 
 		delFst.Next()
 		if err := explore(delFst, delSnd, edit+1, do); err != nil {
@@ -138,7 +138,9 @@ func explore[T Equaler[T]](fst, snd Forkable[T], edit int, do func(Entry[T]) err
 		insFst := fst.Fork()
 		insSnd := snd.Fork()
 		entry.Op = InsertOp
-		do(entry)
+		if err := do(entry); err != nil {
+			return err
+		}
 
 		insSnd.Next()
 		if err := explore(insFst, insSnd, edit+1, do); err != nil {
@@ -178,7 +180,7 @@ func buildPath[T Equaler[T]](fst, snd []T) *path {
 		},
 	}
 	if x == len(fst) && y == len(snd) {
-		return nil
+		return root
 	}
 
 	var (
