@@ -1,10 +1,18 @@
 package myers
 
 import (
+	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 )
+
+type Formatter[T any] interface {
+	Equal(io.Writer, []T) error
+	Insert(io.Writer, []T) error
+	Delete(io.Writer, []T) error
+}
 
 type Equaler[T any] interface {
 	Equal(T) bool
@@ -38,14 +46,57 @@ func (o Op) String() string {
 	}
 }
 
-func Diff[T Equaler[T]](w io.Writer, fst, snd []T) error {
-	return nil
+func DiffFunc[T any](w io.Writer, f Formatter[T], fst, snd []T, eq func(T, T) bool) error {
+	steps := ScriptFunc(fst, snd, eq)
+	if len(steps) == 0 {
+		return nil
+	}
+	ws := bufio.NewWriter(w)
+
+	var x, y int
+	for _, s := range steps {
+		switch s.Op {
+		case EqualOp:
+			if _, err := ws.WriteString("= "); err != nil {
+				return err
+			}
+			if err := f.Equal(ws, snd[y:y+s.Count]); err != nil {
+				return err
+			}
+			x += s.Count
+			y += s.Count
+		case InsertOp:
+			if _, err := ws.WriteString("+ "); err != nil {
+				return err
+			}
+			if err := f.Insert(ws, snd[y:y+s.Count]); err != nil {
+				return err
+			}
+			y += s.Count
+		case DeleteOp:
+			if _, err := ws.WriteString("- "); err != nil {
+				return err
+			}
+			if err := f.Delete(ws, fst[x:x+s.Count]); err != nil {
+				return err
+			}
+			x += s.Count
+		default:
+			continue
+		}
+		ws.WriteString("\n")
+	}
+	return ws.Flush()
 }
 
 type Step struct {
 	Op    Op
 	Pos   int
 	Count int
+}
+
+func (s Step) String() string {
+	return fmt.Sprintf("%s(%d)", s.Op, s.Count)
 }
 
 func Expand(steps []Step) []Step {
@@ -57,10 +108,10 @@ func Expand(steps []Step) []Step {
 			all = append(all, s)
 		}
 	}
-	return steps
+	return all
 }
 
-func ExpandScriptFunc[T any](fst, snd []T, eq func(a, b T) bool) []Step {
+func ExpandScriptFunc[T any](fst, snd []T, eq func(T, T) bool) []Step {
 	steps := ScriptFunc(fst, snd, eq)
 	return Expand(steps)
 }
@@ -71,7 +122,18 @@ func ExpandScript[T Equaler[T]](fst, snd []T) []Step {
 	})
 }
 
-func ScriptFunc[T any](fst, snd []T, eq func(a, b T) bool) []Step {
+func ScriptFunc[T any](fst, snd []T, eq func(T, T) bool) []Step {
+	var (
+		before = commonPrefix(fst, snd, eq)
+		after  = commonSuffix(fst[before:], snd[before:], eq)
+	)
+	fst = fst[before : len(fst)-after]
+	snd = snd[before : len(snd)-after]
+
+	if steps := tryScript(fst, snd, before, after); len(steps) >= 1 {
+		return steps
+	}
+
 	var (
 		script = buildPath(fst, snd, eq)
 		steps  []Step
@@ -79,14 +141,26 @@ func ScriptFunc[T any](fst, snd []T, eq func(a, b T) bool) []Step {
 	if script == nil {
 		return nil
 	}
+	var offset int
 	for {
-		steps = append(steps, script.Step)
+		if offset > 0 && len(steps) > 0 && script.Op == steps[offset-1].Op {
+			steps[offset-1].Count += script.Count
+		} else {
+			steps = append(steps, script.Step)
+			offset++
+		}
 		script = script.parent
 		if script == nil {
 			break
 		}
 	}
 	slices.Reverse(steps)
+	if after > 0 {
+		steps = append(steps, equalStep(before+len(fst), after))
+	}
+	if before > 0 && steps[0].Op == EqualOp && steps[0].Count == 0 {
+		steps[0] = equalStep(0, before)
+	}
 	return steps
 }
 
@@ -113,7 +187,29 @@ type path struct {
 	parent *path
 }
 
-func buildPath[T any](fst, snd []T, eq func(a, b T) bool) *path {
+func tryScript[T any](fst, snd []T, before, after int) []Step {
+	switch {
+	case len(fst) == 0 && len(snd) > 0:
+		return []Step{
+			equalStep(0, before),
+			createStep(InsertOp, before, len(snd)),
+			equalStep(before, after),
+		}
+	case len(fst) > 0 && len(snd) == 0:
+		return []Step{
+			equalStep(0, before),
+			createStep(DeleteOp, before, len(fst)),
+			equalStep(before, after),
+		}
+	case len(fst) == 0 && len(snd) == 0:
+		// equal
+		return []Step{equalStep(0, before+after)}
+	default:
+		return nil
+	}
+}
+
+func buildPath[T any](fst, snd []T, eq func(T, T) bool) *path {
 	x, y, count := advance(0, 0, fst, snd, eq)
 
 	root := &path{
@@ -192,7 +288,7 @@ func buildPath[T any](fst, snd []T, eq func(a, b T) bool) *path {
 	return winner
 }
 
-func advance[T any](x, y int, fst, snd []T, eq func(a, b T) bool) (int, int, int) {
+func advance[T any](x, y int, fst, snd []T, eq func(T, T) bool) (int, int, int) {
 	var count int
 	for x < len(fst) && y < len(snd) && eq(fst[x], snd[y]) {
 		x++
@@ -200,4 +296,28 @@ func advance[T any](x, y int, fst, snd []T, eq func(a, b T) bool) (int, int, int
 		count++
 	}
 	return x, y, count
+}
+
+func commonPrefix[T any](fst, snd []T, eq func(T, T) bool) int {
+	var x, y, count int
+	for x < len(fst) && y < len(snd) && eq(fst[x], snd[y]) {
+		x++
+		y++
+		count++
+	}
+	return count
+}
+
+func commonSuffix[T any](fst, snd []T, eq func(T, T) bool) int {
+	var (
+		x     = len(fst) - 1
+		y     = len(snd) - 1
+		count int
+	)
+	for x >= 0 && y >= 0 && eq(fst[x], snd[y]) {
+		x--
+		y--
+		count++
+	}
+	return count
 }
