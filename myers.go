@@ -209,16 +209,16 @@ func buildPath[T Equaler[T]](fst, snd []T) *path {
 				pred = offset - 1
 				xp = paths[pred].X + 1
 				op = DeleteOp
-			case paths[offset-1].X+1 >= paths[offset+1].X:
-				// delete
-				pred = offset - 1
-				xp = paths[pred].X + 1
-				op = DeleteOp
-			default:
+			case paths[offset-1].X+1 < paths[offset+1].X:
 				// insert
 				pred = offset + 1
 				xp = paths[pred].X
 				op = InsertOp
+			default:
+				// delete
+				pred = offset - 1
+				xp = paths[pred].X + 1
+				op = DeleteOp
 			}
 			yp = xp - offset
 			curr = paths[pred]
