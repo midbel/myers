@@ -84,7 +84,9 @@ func DiffFunc[T any](w io.Writer, f Formatter[T], fst, snd []T, eq func(T, T) bo
 		default:
 			continue
 		}
-		ws.WriteString("\n")
+		if _, err := ws.WriteString("\n"); err != nil {
+			return err
+		}
 	}
 	return ws.Flush()
 }
@@ -123,6 +125,16 @@ func ExpandScript[T Equaler[T]](fst, snd []T) []Step {
 }
 
 func ScriptFunc[T any](fst, snd []T, eq func(T, T) bool) []Step {
+	return buildScript(fst, snd, true, eq)
+}
+
+func Script[T Equaler[T]](fst, snd []T) []Step {
+	return ScriptFunc(fst, snd, func(a, b T) bool {
+		return a.Equal(b)
+	})
+}
+
+func buildScript[T any](fst, snd []T, compress bool, eq func(T, T) bool) []Step {
 	var (
 		before = commonPrefix(fst, snd, eq)
 		after  = commonSuffix(fst[before:], snd[before:], eq)
@@ -131,43 +143,30 @@ func ScriptFunc[T any](fst, snd []T, eq func(T, T) bool) []Step {
 	snd = snd[before : len(snd)-after]
 
 	if steps := tryScript(fst, snd, before, after); len(steps) >= 1 {
-		return steps
+		return compactScript(steps)
 	}
 
 	var (
 		script = buildPath(fst, snd, eq)
 		steps  []Step
 	)
-	if script == nil {
-		return nil
-	}
-	var offset int
-	for {
-		if offset > 0 && len(steps) > 0 && script.Op == steps[offset-1].Op {
+	for offset := 0; script != nil; {
+		if compress && offset > 0 && len(steps) > 0 && script.Op == steps[offset-1].Op {
 			steps[offset-1].Count += script.Count
 		} else {
 			steps = append(steps, script.Step)
 			offset++
 		}
 		script = script.parent
-		if script == nil {
-			break
-		}
 	}
 	slices.Reverse(steps)
+	if before > 0 {
+		steps = append([]Step{equalStep(0, before)}, steps...)
+	}
 	if after > 0 {
 		steps = append(steps, equalStep(before+len(fst), after))
 	}
-	if before > 0 && steps[0].Op == EqualOp && steps[0].Count == 0 {
-		steps[0] = equalStep(0, before)
-	}
-	return steps
-}
-
-func Script[T Equaler[T]](fst, snd []T) []Step {
-	return ScriptFunc(fst, snd, func(a, b T) bool {
-		return a.Equal(b)
-	})
+	return compactScript(steps)
 }
 
 func equalStep(pos, count int) Step {
@@ -193,13 +192,13 @@ func tryScript[T any](fst, snd []T, before, after int) []Step {
 		return []Step{
 			equalStep(0, before),
 			createStep(InsertOp, before, len(snd)),
-			equalStep(before, after),
+			equalStep(len(snd), after),
 		}
 	case len(fst) > 0 && len(snd) == 0:
 		return []Step{
 			equalStep(0, before),
 			createStep(DeleteOp, before, len(fst)),
-			equalStep(before, after),
+			equalStep(len(snd), after),
 		}
 	case len(fst) == 0 && len(snd) == 0:
 		// equal
@@ -207,6 +206,12 @@ func tryScript[T any](fst, snd []T, before, after int) []Step {
 	default:
 		return nil
 	}
+}
+
+func compactScript(steps []Step) []Step {
+	return slices.DeleteFunc(steps, func(s Step) bool {
+		return s.Count == 0
+	})
 }
 
 func buildPath[T any](fst, snd []T, eq func(T, T) bool) *path {

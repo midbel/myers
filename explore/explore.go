@@ -6,6 +6,8 @@ import (
 	"github.com/midbel/myers"
 )
 
+var ErrStop = errors.New("stop exploration")
+
 type Forkable[T any] interface {
 	myers.Sequence[T]
 	Fork() Forkable[T]
@@ -14,7 +16,8 @@ type Forkable[T any] interface {
 type State int
 
 const (
-	StateSucceed State = iota
+	StateDefault State = iota
+	StateSucceed
 	StateFail
 )
 
@@ -25,7 +28,7 @@ func (s State) String() string {
 	case StateFail:
 		return "failure"
 	default:
-		return "normal"
+		return "default"
 	}
 }
 
@@ -93,12 +96,12 @@ func walk[T myers.Equaler[T]](fst, snd Forkable[T], edit int, do func(Entry[T]) 
 		delFst := fst.Fork()
 		delSnd := snd.Fork()
 		entry.Op = myers.DeleteOp
+		entry.Value = v1
 		if err := do(entry); err != nil {
 			return err
 		}
 
 		delFst.Next()
-		entry.Value = v1
 		if err := walk(delFst, delSnd, edit+1, do); err != nil {
 			return err
 		}
